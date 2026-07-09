@@ -7,3 +7,6 @@ smartpolisher.pid
 
 # Ignore log files
 *.log
+
+# Ignore local Windows shortcuts (generated dynamically during setup)
+*.lnk
