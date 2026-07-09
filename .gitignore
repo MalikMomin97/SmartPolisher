@@ -1,0 +1,9 @@
+# Ignore private configuration with API Key
+config.json
+
+# Ignore process ID files
+*.pid
+smartpolisher.pid
+
+# Ignore log files
+*.log
