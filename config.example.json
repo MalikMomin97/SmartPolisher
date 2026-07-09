@@ -1,13 +1,51 @@
 {
   "gemini_api_key": "YOUR_GEMINI_API_KEY_HERE",
   "model_name": "gemini-3.1-flash-lite",
-  "system_prompt": "You are a professional editor. Improve the following text for grammar, spelling, clarity, and tone while preserving its original meaning. Keep the tone natural, professional, and friendly (suitable for Slack, email, and professional messaging). Do not add any conversational filler, notes, greetings, or explanations before or after the corrected text. Return ONLY the enhanced text itself.",
-  "hotkey": {
-    "modifiers": [
-      "Control",
-      "Alt"
-    ],
-    "key": "G"
-  },
-  "enable_notifications": true
+  "enable_notifications": true,
+  "modes": [
+    {
+      "name": "Standard",
+      "system_prompt": "You are a professional editor. Improve the following text for grammar, spelling, clarity, and tone while preserving its original meaning. Keep the tone natural, professional, and friendly (suitable for Slack, email, and professional messaging). Do not add any conversational filler, notes, greetings, or explanations before or after the corrected text. Return ONLY the enhanced text itself.",
+      "hotkey": {
+        "modifiers": [
+          "Control",
+          "Alt"
+        ],
+        "key": "G"
+      }
+    },
+    {
+      "name": "Professional",
+      "system_prompt": "You are a professional editor. Rewrite the following text to make it highly professional, formal, and polite, suitable for business emails or communication with executives. Do not add any conversational filler, notes, greetings, or explanations before or after the corrected text. Return ONLY the polished text itself.",
+      "hotkey": {
+        "modifiers": [
+          "Control",
+          "Alt"
+        ],
+        "key": "P"
+      }
+    },
+    {
+      "name": "Shorten",
+      "system_prompt": "You are a professional editor. Condense the following text to make it extremely concise and direct, suitable for quick Slack or Teams messages. Keep the core information but remove wordiness. Do not add conversational filler, notes, or explanations before or after the corrected text. Return ONLY the shortened text itself.",
+      "hotkey": {
+        "modifiers": [
+          "Control",
+          "Alt"
+        ],
+        "key": "S"
+      }
+    },
+    {
+      "name": "Elaborate",
+      "system_prompt": "You are a professional editor. Expand the following text to make it more detailed, well-structured, and clear. Add professional phrasing and detail while keeping the original meaning. Do not add conversational filler, notes, or explanations before or after the corrected text. Return ONLY the expanded text itself.",
+      "hotkey": {
+        "modifiers": [
+          "Control",
+          "Alt"
+        ],
+        "key": "E"
+      }
+    }
+  ]
 }

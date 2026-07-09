@@ -10,16 +10,45 @@ if ([string]::IsNullOrEmpty($ScriptDir)) {
 # 1. Load config file
 $ConfigFile = "$ScriptDir\config.json"
 if (-not (Test-Path $ConfigFile)) {
-    # If config does not exist, create a default one
+    # If config does not exist, create a default multi-mode one
     $defaultConfig = @{
         gemini_api_key = "YOUR_GEMINI_API_KEY_HERE"
         model_name = "gemini-3.1-flash-lite"
-        system_prompt = "You are a professional editor. Improve the following text for grammar, spelling, clarity, and tone while preserving its original meaning. Keep the tone natural, professional, and friendly (suitable for Slack, email, and professional messaging). Do not add any conversational filler, notes, greetings, or explanations before or after the corrected text. Return ONLY the enhanced text itself."
-        hotkey = @{
-            modifiers = @("Control", "Alt")
-            key = "G"
-        }
         enable_notifications = $true
+        modes = @(
+            @{
+                name = "Standard"
+                system_prompt = "You are a professional editor. Improve the following text for grammar, spelling, clarity, and tone while preserving its original meaning. Keep the tone natural, professional, and friendly (suitable for Slack, email, and professional messaging). Do not add any conversational filler, notes, greetings, or explanations before or after the corrected text. Return ONLY the enhanced text itself."
+                hotkey = @{
+                    modifiers = @("Control", "Alt")
+                    key = "G"
+                }
+            },
+            @{
+                name = "Professional"
+                system_prompt = "You are a professional editor. Rewrite the following text to make it highly professional, formal, and polite, suitable for business emails or communication with executives. Do not add any conversational filler, notes, greetings, or explanations before or after the corrected text. Return ONLY the polished text itself."
+                hotkey = @{
+                    modifiers = @("Control", "Alt")
+                    key = "P"
+                }
+            },
+            @{
+                name = "Shorten"
+                system_prompt = "You are a professional editor. Condense the following text to make it extremely concise and direct, suitable for quick Slack or Teams messages. Keep the core information but remove wordiness. Do not add conversational filler, notes, or explanations before or after the corrected text. Return ONLY the shortened text itself."
+                hotkey = @{
+                    modifiers = @("Control", "Alt")
+                    key = "S"
+                }
+            },
+            @{
+                name = "Elaborate"
+                system_prompt = "You are a professional editor. Expand the following text to make it more detailed, well-structured, and clear. Add professional phrasing and detail while keeping the original meaning. Do not add conversational filler, notes, or explanations before or after the corrected text. Return ONLY the expanded text itself."
+                hotkey = @{
+                    modifiers = @("Control", "Alt")
+                    key = "E"
+                }
+            }
+        )
     }
     $defaultConfig | ConvertTo-Json -Depth 10 | Out-File -FilePath $ConfigFile -Encoding utf8
 }
@@ -33,7 +62,7 @@ $PID | Out-File -FilePath $PidFile -Encoding ascii -Force
 # Setup NotifyIcon first to allow early notification error messaging
 $notify = New-Object System.Windows.Forms.NotifyIcon
 $notify.Icon = [System.Drawing.SystemIcons]::Application
-$notify.Text = "SmartPolisher (Ctrl+Alt+G)"
+$notify.Text = "SmartPolisher (Multi-Mode)"
 $notify.Visible = $true
 
 function Show-Notification {
@@ -64,6 +93,7 @@ $csharpCode = @"
 using System;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using System.Collections.Generic;
 
 public class KeyboardHelper {
     [DllImport("user32.dll")]
@@ -113,25 +143,35 @@ public class HotKeyForm : Form {
     private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
     private const int WM_HOTKEY = 0x0312;
-    private Action _callback;
-    public bool IsRegistered { get; private set; }
+    private Action<int> _callback;
+    private List<int> _registeredIds = new List<int>();
 
-    public HotKeyForm(uint modifiers, uint key, Action callback) {
+    public HotKeyForm(Action<int> callback) {
         _callback = callback;
-        IsRegistered = RegisterHotKey(this.Handle, 1, modifiers, key);
+    }
+
+    public bool AddHotKey(int id, uint modifiers, uint key) {
+        bool success = RegisterHotKey(this.Handle, id, modifiers, key);
+        if (success) {
+            _registeredIds.Add(id);
+        }
+        return success;
     }
 
     protected override void WndProc(ref Message m) {
-        if (m.Msg == WM_HOTKEY && m.WParam.ToInt32() == 1) {
+        if (m.Msg == WM_HOTKEY) {
+            int id = m.WParam.ToInt32();
             if (_callback != null) {
-                _callback();
+                _callback(id);
             }
         }
         base.WndProc(ref m);
     }
 
     protected override void Dispose(bool disposing) {
-        UnregisterHotKey(this.Handle, 1);
+        foreach (int id in _registeredIds) {
+            UnregisterHotKey(this.Handle, id);
+        }
         base.Dispose(disposing);
     }
 }
@@ -140,32 +180,16 @@ public class HotKeyForm : Form {
 # Compile the C# helper code
 Add-Type -TypeDefinition $csharpCode -ReferencedAssemblies "System.Windows.Forms", "System.Drawing"
 
-# Parse hotkey modifiers
-$modifiersValue = 0
-foreach ($mod in $config.hotkey.modifiers) {
-    switch ($mod.ToLower()) {
-        "alt" { $modifiersValue = $modifiersValue -bor 0x0001 }
-        "control" { $modifiersValue = $modifiersValue -bor 0x0002 }
-        "ctrl" { $modifiersValue = $modifiersValue -bor 0x0002 }
-        "shift" { $modifiersValue = $modifiersValue -bor 0x0004 }
-        "win" { $modifiersValue = $modifiersValue -bor 0x0008 }
-    }
-}
-
-# Parse key
-try {
-    $keyString = $config.hotkey.key
-    $keyEnum = [System.Windows.Forms.Keys]::Parse([System.Windows.Forms.Keys], $keyString, $true)
-    $keyValue = [int]$keyEnum
-} catch {
-    # Fallback to 'G' if parsing fails
-    $keyValue = 0x47
-}
-
-# Define what happens when the hotkey is pressed
+# Define what happens when a hotkey is pressed (receives the mode ID)
 $callback = {
-    # Show status
-    Show-Notification "SmartPolisher" "Polishing selected text..." "Info"
+    param([int]$modeId)
+
+    # 1. Resolve which mode was triggered (1-based index)
+    $mode = $config.modes[$modeId - 1]
+    if ($null -eq $mode) { return }
+
+    # Show status notification
+    Show-Notification "SmartPolisher" "Polishing text ($($mode.name) mode)..." "Info"
 
     # Save original clipboard to restore it later
     $oldClipboard = [System.Windows.Forms.Clipboard]::GetText()
@@ -194,7 +218,7 @@ $callback = {
                 @{
                     parts = @(
                         @{
-                            text = "$($config.system_prompt)`n`nText to improve:`n$selectedText"
+                            text = "$($mode.system_prompt)`n`nText to improve:`n$selectedText"
                         }
                     )
                 }
@@ -224,7 +248,7 @@ $callback = {
                 [KeyboardHelper]::SimulatePaste()
                 Start-Sleep -Milliseconds 150 # Safe delay to let application finish pasting before clipboard restoration
                 
-                Show-Notification "SmartPolisher" "Text enhanced successfully!" "Info"
+                Show-Notification "SmartPolisher" "Polished ($($mode.name)) successfully!" "Info"
             } else {
                 throw "Gemini response was empty."
             }
@@ -246,10 +270,47 @@ $callback = {
 }
 
 # Create hotkey Form
-$form = New-Object HotKeyForm $modifiersValue, $keyValue, $callback
+$form = New-Object HotKeyForm $callback
 
-if (-not $form.IsRegistered) {
-    Show-Notification "SmartPolisher Error" "Could not register hotkey. It might be in use by another application." "Error"
+# Parse and register all modes
+$successCount = 0
+$index = 1
+foreach ($mode in $config.modes) {
+    # Parse hotkey modifiers
+    $modifiersValue = 0
+    foreach ($mod in $mode.hotkey.modifiers) {
+        switch ($mod.ToLower()) {
+            "alt" { $modifiersValue = $modifiersValue -bor 0x0001 }
+            "control" { $modifiersValue = $modifiersValue -bor 0x0002 }
+            "ctrl" { $modifiersValue = $modifiersValue -bor 0x0002 }
+            "shift" { $modifiersValue = $modifiersValue -bor 0x0004 }
+            "win" { $modifiersValue = $modifiersValue -bor 0x0008 }
+        }
+    }
+
+    # Parse key
+    try {
+        $keyString = $mode.hotkey.key
+        $keyEnum = [System.Windows.Forms.Keys]::Parse([System.Windows.Forms.Keys], $keyString, $true)
+        $keyValue = [int]$keyEnum
+    } catch {
+        # Fallback to key index-based or 'G'
+        $keyValue = 0x47
+    }
+
+    # Register the hotkey
+    $isReg = $form.AddHotKey($index, $modifiersValue, $keyValue)
+    if ($isReg) {
+        $successCount++
+    } else {
+        Show-Notification "SmartPolisher Warning" "Could not register hotkey for mode '$($mode.name)'." "Warning"
+    }
+    $index++
+}
+
+# If no hotkeys registered, exit
+if ($successCount -eq 0) {
+    Show-Notification "SmartPolisher Error" "Failed to register any shortcuts. Exiting." "Error"
     if (Test-Path $PidFile) { Remove-Item $PidFile -Force }
     $notify.Visible = $false
     [System.Windows.Forms.Application]::Exit()
@@ -270,8 +331,12 @@ $contextMenu.MenuItems.Add($exitMenuItem)
 $notify.ContextMenu = $contextMenu
 
 # Show startup success notification
-$modKeys = $config.hotkey.modifiers -join "+"
-Show-Notification "SmartPolisher is Ready" "Running in background. Highlight text and press $modKeys+$($config.hotkey.key) to polish!" "Info"
+$activeModes = @()
+foreach ($m in $config.modes) {
+    $modStr = $m.hotkey.modifiers -join "+"
+    $activeModes += "$($m.name) ($modStr+$($m.hotkey.key))"
+}
+Show-Notification "SmartPolisher is Ready" "Active modes: $($activeModes -join ', ')" "Info"
 
 # Start the WinForms Application event loop
 [System.Windows.Forms.Application]::Run($form)
