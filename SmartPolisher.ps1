@@ -180,6 +180,101 @@ public class HotKeyForm : Form {
 # Compile the C# helper code
 Add-Type -TypeDefinition $csharpCode -ReferencedAssemblies "System.Windows.Forms", "System.Drawing"
 
+function Show-PromptDialog {
+    param(
+        [string]$Title = "SmartPolisher Custom Command"
+    )
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = $Title
+    $form.Size = New-Object System.Drawing.Size(400, 160)
+    $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+    $form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+    $form.ShowInTaskbar = $false
+    $form.TopMost = $true
+    
+    # Modern dark theme colors
+    $form.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 30)
+    $form.ForeColor = [System.Drawing.Color]::White
+
+    $label = New-Object System.Windows.Forms.Label
+    $label.Text = "Enter custom instruction for selected text:"
+    $label.Location = New-Object System.Drawing.Point(15, 15)
+    $label.Size = New-Object System.Drawing.Size(370, 20)
+    $label.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
+    $form.Controls.Add($label)
+
+    $textBox = New-Object System.Windows.Forms.TextBox
+    $textBox.Location = New-Object System.Drawing.Point(15, 40)
+    $textBox.Size = New-Object System.Drawing.Size(355, 25)
+    $textBox.Font = New-Object System.Drawing.Font("Segoe UI", 10)
+    $textBox.BackColor = [System.Drawing.Color]::FromArgb(45, 45, 45)
+    $textBox.ForeColor = [System.Drawing.Color]::White
+    $textBox.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+    $form.Controls.Add($textBox)
+
+    $btnOk = New-Object System.Windows.Forms.Button
+    $btnOk.Text = "Execute"
+    $btnOk.Location = New-Object System.Drawing.Point(185, 80)
+    $btnOk.Size = New-Object System.Drawing.Size(85, 28)
+    $btnOk.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
+    $btnOk.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $btnOk.FlatAppearance.BorderSize = 0
+    $btnOk.BackColor = [System.Drawing.Color]::FromArgb(0, 120, 215)
+    $btnOk.ForeColor = [System.Drawing.Color]::White
+    $btnOk.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $form.Controls.Add($btnOk)
+
+    $btnCancel = New-Object System.Windows.Forms.Button
+    $btnCancel.Text = "Cancel"
+    $btnCancel.Location = New-Object System.Drawing.Point(285, 80)
+    $btnCancel.Size = New-Object System.Drawing.Size(85, 28)
+    $btnCancel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+    $btnCancel.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $btnCancel.FlatAppearance.BorderSize = 1
+    $btnCancel.FlatAppearance.BorderColor = [System.Drawing.Color]::Gray
+    $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $form.Controls.Add($btnCancel)
+
+    $form.AcceptButton = $btnOk
+    $form.CancelButton = $btnCancel
+
+    $form.Add_Shown({
+        $textBox.Focus()
+    })
+
+    $result = $form.ShowDialog()
+    if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+        return $textBox.Text
+    }
+    return $null
+}
+
+# Programmatically append Custom Command mode to config modes for hotkey registration
+if ($null -ne $config -and $null -ne $config.modes) {
+    $customMode = @{
+        name = "Custom Command"
+        system_prompt = "You are a professional assistant. Follow the user's custom instruction to transform the following text. Do not add any conversational filler, notes, greetings, or explanations before or after the modified text. Return ONLY the final transformed text."
+        hotkey = @{
+            modifiers = @("Control", "Alt")
+            key = "C"
+        }
+        is_custom = $true
+    }
+    $customModeObj = $customMode | ConvertTo-Json | ConvertFrom-Json
+    
+    $tempList = New-Object System.Collections.Generic.List[System.Object]
+    foreach ($m in $config.modes) {
+        $tempList.Add($m)
+    }
+    $tempList.Add($customModeObj)
+    $config.modes = $tempList.ToArray()
+}
+
 # Define what happens when a hotkey is pressed (receives the mode ID)
 $callback = {
     param([int]$modeId)
@@ -187,9 +282,6 @@ $callback = {
     # 1. Resolve which mode was triggered (1-based index)
     $mode = $config.modes[$modeId - 1]
     if ($null -eq $mode) { return }
-
-    # Show status notification
-    Show-Notification "SmartPolisher" "Polishing text ($($mode.name) mode)..." "Info"
 
     # Save original clipboard to restore it later
     $oldClipboard = [System.Windows.Forms.Clipboard]::GetText()
@@ -211,14 +303,38 @@ $callback = {
         return
     }
 
+    # Show prompt dialog if this is a custom command!
+    $customPrompt = $null
+    if ($mode.is_custom -eq $true) {
+        $customPrompt = Show-PromptDialog
+        if ([string]::IsNullOrWhiteSpace($customPrompt)) {
+            # User cancelled or entered empty
+            if ($oldClipboard) {
+                [System.Windows.Forms.Clipboard]::SetText($oldClipboard)
+            }
+            return
+        }
+        Show-Notification "SmartPolisher" "Processing custom command..." "Info"
+    } else {
+        # Show status notification for standard modes
+        Show-Notification "SmartPolisher" "Polishing text ($($mode.name) mode)..." "Info"
+    }
+
     # Call Gemini API
     try {
+        $promptText = ""
+        if ($mode.is_custom -eq $true) {
+            $promptText = "$($mode.system_prompt)`n`nInstruction: $customPrompt`n`nText to transform:`n$selectedText"
+        } else {
+            $promptText = "$($mode.system_prompt)`n`nText to improve:`n$selectedText"
+        }
+
         $body = @{
             contents = @(
                 @{
                     parts = @(
                         @{
-                            text = "$($mode.system_prompt)`n`nText to improve:`n$selectedText"
+                            text = $promptText
                         }
                     )
                 }
