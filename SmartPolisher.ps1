@@ -1,3 +1,26 @@
+# 0. Hide the PowerShell console window programmatically to run silently in the background
+$win32Code = @"
+using System;
+using System.Runtime.InteropServices;
+
+public class ConsoleHelper {
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr GetConsoleWindow();
+
+    public static void HideConsole() {
+        IntPtr hwnd = GetConsoleWindow();
+        if (hwnd != IntPtr.Zero) {
+            ShowWindow(hwnd, 0); // 0 = SW_HIDE
+        }
+    }
+}
+"@
+Add-Type -TypeDefinition $win32Code
+[ConsoleHelper]::HideConsole()
+
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
